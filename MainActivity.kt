@@ -5,17 +5,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -50,6 +44,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.lerp
 
 private val Bg = Color(0xFF0A0A0A)
 private val Ink = Color(0xFFF2F2F2)
@@ -57,6 +56,9 @@ private val Dim = Color(0xFF8A8A8A)
 private val Faint = Color(0xFF525252)
 private val Line = Color(0xFF1E1E1E)
 private val LineSoft = Color(0xFF262626)
+
+private val MorphEase = CubicBezierEasing(0.32f, 0.72f, 0.35f, 1f)
+private const val morphMs = 300
 
 data class Task(
     val id: Long,
@@ -89,7 +91,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChecklistScreen() {
     var tasks by remember { mutableStateOf(seedTasks()) }
@@ -141,7 +143,34 @@ fun ChecklistScreen() {
 
     val doneCount = tasks.count { it.done }
     val progress = if (tasks.isEmpty()) 0f else doneCount.toFloat() / tasks.size
-    val animatedProgress by animateFloatAsState(targetValue = progress, animationSpec = tween(durationMillis = 400), label = "progress")
+    val animatedProgress by animateFloatAsState(t
+        targetValue = progress,
+        animationSpec = tween(durationMillis = morphMs, easing = MorphEase),
+        label = "progress"
+    )
+    
+    val morph by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(durationMillis = morphMs, easing = MorphEase),
+        label = "morph",
+    )
+
+    val inputSize by animateFloatAsState(
+        targetValue = if (active) 16f else 30f,
+        animationSpec = tween(durationMillis = morphMs, easing = MorphEase),
+        label = "inputSize",
+    )
+
+    val inputTracking by animateFloatAsState(
+        targetValue = if (active) 0f else -0.5f,
+        animationSpec = tween(durationMillis = morphMs, easing = MorphEase),
+        label = "inputTracking",
+    )
+
+    val topPad = lerp(132.dp, 14.dp, morph)
+    val bottomPad = lerp(8.dp, 0.dp, morph)
+    val promptH = lerp(34.dp, 0.dp, morph)
+    val counterH = lerp(0.dp, 40.dp, morph)
 
     Column(
         modifier = Modifier
@@ -157,11 +186,11 @@ fun ChecklistScreen() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                if (active) {
                     Canvas(
                         modifier = Modifier
                             .size(24.dp)
-                            .clickable { goHero() }
+                            .alpha(morph)
+                            .clickable(enabled = active) { goHero() }
                     ) {
                         val c = Dim
                         val w = size.width
@@ -171,7 +200,6 @@ fun ChecklistScreen() {
 
                         drawLine(c, start = androidx.compose.ui.geometry.Offset(w * 0.35f, h * 0.5f),
                             end = androidx.compose.ui.geometry.Offset(w * 0.65f, h * 0.75f), strokeWidth = 3f)
-                    }
                 }
             }
             if (active) {
@@ -179,55 +207,187 @@ fun ChecklistScreen() {
                     text = "$doneCount / ${tasks.size} done",
                     color = Faint, fontSize = 11.sp,
                     letterSpacing = 2.sp,
+                    modifier = Modifier.alpha(morph),
                 )
             }
         }
-        AnimatedContent(
-            targetState = active,
-            transitionSpec = {
-                (fadeIn(tween(500)) + slideInVertically(tween(500)) { it / 5 }) togetherWith (fadeOut(tween(500)) + slideOutVertically(tween(500)) { it / 5 }) using SizeTransform(clip = false)
-            }, label = "screen",
-        ){ isActive ->
-            if (!isActive) {
-            HeroState(
-                input = input,
-                onInput = { input = it },
-                tasks = tasks,
-                focusRequester = focusRequester,
-                onAdd = { addTask(it) },
-                onTeaserTap = { active = true },
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = topPad, bottom = bottomPad)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(promptH)
+                    .clipToBounds(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Text(
+                    text = "CHECKLIST"
+                    color = Faint, fontSize = 11.sp, letterSpacing = 4.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                        .alpha(1f - morph),
+                )
+            }
+            TextField(
+                value = input,
+                onValueChange = { input = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester),
+                placeholder = null,
+                singleLine = true,
+                keyboardOptions = keyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = keyboardActions(onDone = { addTask(input) }),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color(0xFF6B6B6B),
+                    unfocusedIndicatorColor = LineSoft,
+                    focusedTextColor = Ink,
+                    unfocusedTextColor = Ink,
+                    cursorColor = Ink,
+                ),
+                textStyle = TextStyle(
+                    fontSize = inputSize.sp,
+                    letterSpacing = inputTracking.sp,
+                    fontWeight = if (active) FontWeight.Normal else FontWeight.Medium,
+                    textAlign = if (active) TextAlign.Start else TextAlign.Center,
+                ),
             )
-        } else {
-            ActiveState(
-                input = input,
-                onInput = { input = it },
-                tasks = tasks,
-                progress = animatedProgress,
-                focusedId = focusedId,
-                onFocusRow = { focusedId = if (focusedId == it) null else it },
-                onToggle = { toggleDone(it) },
-                onDelete = { deleteTask(it) },
-                onNotes = { id, notes ->
-                    tasks = tasks.map { if (it.id == id) it.copy(notes = notes) else it }
-                },
-                onAdd = { addTask(it) },
-            )}
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .alpha(morph)
+            ) {
+                Box(Modifier.matchParentSize().background(Color(0xFF1C1C1C)))
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(animatedProgress)
+                        .background(Ink)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(counterH)
+                    .clipToBounds(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
+                        .alpha(morph),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "${doneCount} / ${tasks.size} done",
+                        color = Faint, fontSize = 11.sp, letterSpacing = 2.sp,
+                    )
+                    Text(
+                        text = "${(animatedProgress * 100).toInt()}%",
+                        color = Faint, fontSize = 11.sp, letterSpacing = 2.sp,
+                    )
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clipToBounds()
+        ) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        alpha = morph
+                        translationY = 22.dp.toPx() * (1f - morph)
+                        val s = 0.98f + 0.02f * morph
+                        scaleX = s
+                        scaleY = s
+                    }
+            ) {
+                if (tasks.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = "Nothing yet", color = Color(0xFF4D4D4D), fontSize = 14.sp)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        userScrollEnabled = active,
+                    ) {
+                        items(tasks, key = { it.id }) { task ->
+                            TaskRow(
+                                task = task,
+                                focused = focusedId == task.id,
+                                onTap = { focusedId = if (focusedId == task.id) null else task.id },
+                                onToggle = { toggleDone(task) },
+                                onDelete = {deleteTask(task.id) },
+                                onNotes = { notes ->
+                                    tasks = tasks.map { if (it.id == task.id) it.copy(notes = notes) else it }
+                                },
+                                modifier = Modifier.animateItem(),
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (!active) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .pointerInput(Unit) {}
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        alpha = 1f - morph
+                        translationY = -18.dp.toPx() * morph
+                        val s = 1f - 0.02f * morph
+                        scaleX = s 
+                        scaleY = s
+                    }
+            ) {
+                HeroTeaser(
+                    tasks = tasks,
+                    needle = input.trim().lowercase(),
+                    tappable = !active,
+                    onTap = { active = true },
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun HeroState(
-    input: String,
-    onInput: (String) -> Unit,
     tasks: List<Task>,
-    focusRequester: FocusRequester,
-    onAdd: (String) -> Unit,
-    onTeaserTap: () -> Unit,
+    needle: String,
+    tappable: Boolean,
+    onTap: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 18.dp, start = 8.dp, end = 8.dp)
+    ) {
 
-    val needle = input.trim().lowercase()
     val teaser = remember(tasks) { tasks.take(5) }
     val shown = remember(teaser, needle) {
         if (needle.isEmpty()) teaser
@@ -292,7 +452,7 @@ private fun HeroState(
                     .fillMaxWidth()
                     .scale(sc)
                     .alpha(alpha)
-                    .clickable { onTeaserTap() }
+                    .then(if (tappable) Modifier.clickable { onTap() } else Modifier)
                     .padding(vertical = 1.dp),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -322,97 +482,6 @@ private fun highlightMatch(text: String, needle: String): androidx.compose.ui.te
             append(text.substring(idx, idx + needle.length))
         }
         withStyle(SpanStyle(color = Ink)) { append(text.substring(idx + needle.length )) }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ActiveState(
-    input: String,
-    onInput: (String) -> Unit,
-    tasks: List<Task>,
-    progress: Float,
-    focusedId: Long?,
-    onFocusRow: (Long) -> Unit,
-    onToggle: (Task) -> Unit,
-    onDelete: (Long) -> Unit,
-    onNotes: (Long, String) -> Unit,
-    onAdd: (String) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxSize()) {
-    TextField(
-        value = input,
-        onValueChange = onInput,
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = { onAdd(input) }),
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = Color.Transparent,
-            unfocusedContainerColor = Color.Transparent,
-            focusedIndicatorColor = Color(0xFF6B6B6B),
-            unfocusedIndicatorColor = LineSoft,
-            focusedTextColor = Ink, unfocusedTextColor = Ink,
-            cursorColor = Ink,
-        ),
-        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp),
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(Color(0xFF1C1C1C))
-    ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(progress)
-                    .background(Ink)
-            )
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            val doneN = tasks.count { it.done }
-            Text(
-                text = "$doneN / ${tasks.size} done",
-                color = Faint, fontSize = 11.sp, letterSpacing = 2.sp,
-            )
-            Text(
-                text = "${(progress * 100).toInt()}%",
-                color = Faint, fontSize = 11.sp, letterSpacing = 2.sp,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-
-        if (tasks.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(text = "Nothing yet", color = Color(0xFF4D4D4D), fontSize = 14.sp)
-            }
-            return
-        }
-
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(tasks, key = { it.id }) { task ->
-                TaskRow(
-                    task = task,
-                    focused = focusedId == task.id,
-                    onTap = { onFocusRow(task.id) },
-                    onToggle = { onToggle(task) },
-                    onDelete = { onDelete(task.id) },
-                    onNotes = { onNotes(task.id, it) },
-                    modifier = Modifier.animateItem(),
-                )
-            }
-        }
     }
 }
 
